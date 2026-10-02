@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Neon Voice</title>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1 id="title">NEON VOICE</h1>
+    <div class="tools">
+      <button id="muteBtn" title="Mute voice">🔊</button>
+      <button id="renameBtn" title="Rename">✎</button>
+    </div>
+  </header>
+  <div id="orbWrap"><div id="orb"></div><div id="status">idle</div></div>
+  <main id="log"></main>
+  <footer>
+    <input id="input" placeholder="Type a message..." autocomplete="off" />
+    <button id="send">➤</button>
+    <button id="mic">🎤</button>
+  </footer>
+</div>
+<div id="overlay">
+  <div class="card">
+    <h2>Name your assistant</h2>
+    <input id="nameInput" placeholder="e.g. Nova" maxlength="30" />
+    <button id="nameSave">Wake her up</button>
+  </div>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

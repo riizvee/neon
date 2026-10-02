@@ -1,0 +1,6 @@
+{
+  "appId": "com.neonvoice.assistant",
+  "appName": "Neon Voice",
+  "webDir": "dist",
+  "server": { "androidScheme": "http", "cleartext": true }
+}
