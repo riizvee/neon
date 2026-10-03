@@ -41,45 +41,79 @@ $("nameSave").onclick = () => {
 $("nameInput").onkeydown = (e) => { if (e.key === "Enter") $("nameSave").click(); };
 $("renameBtn").onclick = () => { $("nameInput").value = name; $("overlay").classList.remove("hide"); };
 
-// ---------- Voice out (female) ----------
-const FEMALE = /(female|samantha|zira|aria|jenny|hazel|susan|karen|moira|tessa|victoria|serena|google uk english female|google us english)/i;
+// ---------- Voice out: Edge neural voice from server, device voice as fallback ----------
+let audioEl = null, endAudio = null;
+
+function stopSpeech() {
+  if (audioEl) { audioEl.pause(); audioEl = null; }
+  if (endAudio) { endAudio(); endAudio = null; }
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
+  if (native) TextToSpeech.stop().catch(() => {});
+}
+
+async function speakEdge(text) {
+  const r = await fetch(`${API}/api/tts`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) throw new Error("tts " + r.status);
+  const url = URL.createObjectURL(await r.blob());
+  try {
+    await new Promise((res, rej) => {
+      const a = new Audio(url);
+      audioEl = a; endAudio = res;
+      a.onended = res; a.onpause = res;
+      a.onerror = () => rej(new Error("audio error"));
+      a.play().catch(rej);
+    });
+  } finally { URL.revokeObjectURL(url); audioEl = null; endAudio = null; }
+}
+
+// Fallback: device voice
+const FEMALE = /(female|samantha|zira|aria|jenny|hazel|susan|karen|moira|tessa|victoria|serena)/i;
 let webVoice = null;
 function pickWebVoice() {
   const v = speechSynthesis.getVoices().filter((x) => x.lang.startsWith("en"));
-  webVoice = v.find((x) => /natural|neural|online/i.test(x.name) && FEMALE.test(x.name))
-    || v.find((x) => FEMALE.test(x.name)) || v[0] || null;
+  webVoice = v.find((x) => FEMALE.test(x.name)) || v[0] || null;
 }
 if ("speechSynthesis" in window) { pickWebVoice(); speechSynthesis.onvoiceschanged = pickWebVoice; }
 
 let nativeVoiceIdx;
+async function speakDevice(text) {
+  if (native) {
+    if (nativeVoiceIdx === undefined) {
+      const { voices } = await TextToSpeech.getSupportedVoices();
+      const en = voices.map((v, idx) => ({ ...v, idx })).filter((v) => v.lang.startsWith("en"));
+      const best = en.find((v) => /female/i.test(v.name));
+      nativeVoiceIdx = best ? best.idx : null;
+    }
+    const opts = { text, lang: "en-US", rate: 1.0, pitch: 1.0, volume: 1.0, category: "playback" };
+    if (nativeVoiceIdx !== null) opts.voice = nativeVoiceIdx;
+    await TextToSpeech.speak(opts);
+  } else {
+    await new Promise((res) => {
+      const u = new SpeechSynthesisUtterance(text);
+      if (webVoice) u.voice = webVoice;
+      u.lang = "en-US"; u.pitch = 1.1; u.rate = 1.05;
+      u.onend = u.onerror = res; speechSynthesis.speak(u);
+    });
+  }
+}
+
 async function speak(text) {
   if (muted) return;
+  stopSpeech();
   setState("speaking");
-  try {
-    if (native) {
-      if (nativeVoiceIdx === undefined) {
-        const { voices } = await TextToSpeech.getSupportedVoices();
-        const i = voices.findIndex((v) => v.lang.startsWith("en") && /female/i.test(v.name));
-        nativeVoiceIdx = i >= 0 ? i : null;
-      }
-      const opts = { text, lang: "en-US", rate: 1.0, pitch: 1.1, volume: 1.0, category: "playback" };
-      if (nativeVoiceIdx !== null) opts.voice = nativeVoiceIdx;
-      await TextToSpeech.speak(opts);
-    } else {
-      speechSynthesis.cancel();
-      await new Promise((res) => {
-        const u = new SpeechSynthesisUtterance(text);
-        if (webVoice) u.voice = webVoice;
-        u.lang = "en-US"; u.pitch = 1.15; u.rate = 1.0;
-        u.onend = u.onerror = res; speechSynthesis.speak(u);
-      });
-    }
-  } catch (e) { console.warn("TTS", e); }
+  try { await speakEdge(text); }
+  catch (e) {
+    console.warn("Edge TTS failed, using device voice:", e);
+    try { await speakDevice(text); } catch (e2) { console.warn("TTS", e2); }
+  }
   setState("idle");
 }
 $("muteBtn").onclick = () => {
   muted = !muted; store.set("muted", muted); $("muteBtn").textContent = muted ? "🔇" : "🔊";
-  if (muted) { native ? TextToSpeech.stop() : speechSynthesis.cancel(); setState("idle"); }
+  if (muted) { stopSpeech(); setState("idle"); }
 };
 $("muteBtn").textContent = muted ? "🔇" : "🔊";
 
@@ -110,7 +144,7 @@ $("input").onkeydown = (e) => { if (e.key === "Enter") $("send").click(); };
 const WebSR = window.SpeechRecognition || window.webkitSpeechRecognition;
 async function toggleMic() {
   if (listening) return stopMic();
-  native ? speechSynthesis && TextToSpeech.stop() : speechSynthesis.cancel();
+  stopSpeech();
   listening = true; $("mic").classList.add("on"); setState("listening");
   try {
     if (native) {
