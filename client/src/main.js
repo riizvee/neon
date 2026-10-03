@@ -12,6 +12,7 @@ const store = {
 };
 
 let name = store.get("assistant_name", "");
+let role = store.get("assistant_role", "");
 let history = store.get("history", []);
 let muted = store.get("muted", false);
 let busy = false, listening = false;
@@ -29,17 +30,21 @@ function applyName() {
   $("title").textContent = name.toUpperCase();
   $("overlay").classList.toggle("hide", !!name);
 }
+const KICKOFF = "[start]";
 function greet() {
+  if (role) { send(KICKOFF, true); return; }
   const g = `Hi, I'm ${name}. How can I help you?`;
   addMsg("assistant", g); speak(g);
 }
 $("nameSave").onclick = () => {
   const v = $("nameInput").value.trim(); if (!v) return;
-  name = v; store.set("assistant_name", name); history = []; store.set("history", history);
+  name = v; store.set("assistant_name", name);
+  role = $("roleInput").value.trim(); store.set("assistant_role", role); history = []; store.set("history", history);
   $("log").innerHTML = ""; applyName(); greet();
 };
-$("nameInput").onkeydown = (e) => { if (e.key === "Enter") $("nameSave").click(); };
-$("renameBtn").onclick = () => { $("nameInput").value = name; $("overlay").classList.remove("hide"); };
+$("nameInput").onkeydown = (e) => { if (e.key === "Enter") $("roleInput").focus(); };
+$("roleInput").onkeydown = (e) => { if (e.key === "Enter") $("nameSave").click(); };
+$("renameBtn").onclick = () => { $("nameInput").value = name; $("roleInput").value = role; $("overlay").classList.remove("hide"); };
 
 // ---------- Voice out: Edge neural voice from server, device voice as fallback ----------
 let audioEl = null, endAudio = null;
@@ -118,16 +123,16 @@ $("muteBtn").onclick = () => {
 $("muteBtn").textContent = muted ? "🔇" : "🔊";
 
 // ---------- Chat ----------
-async function send(text) {
+async function send(text, hidden = false) {
   text = text.trim(); if (!text || busy) return;
-  busy = true; addMsg("user", text);
+  busy = true; if (!hidden) addMsg("user", text);
   history.push({ role: "user", content: text });
   setState("thinking");
   let reply;
   try {
     const r = await fetch(`${API}/api/chat`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, messages: history }),
+      body: JSON.stringify({ name, role, messages: history }),
     });
     const j = await r.json();
     reply = j.reply || "Sorry, something went wrong on my end.";
@@ -169,4 +174,4 @@ $("mic").onclick = toggleMic;
 
 // ---------- Boot ----------
 applyName();
-history.slice(-12).forEach((m) => addMsg(m.role, m.content));
+history.slice(-12).forEach((m) => { if (m.content !== KICKOFF) addMsg(m.role, m.content); });

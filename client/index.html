@@ -4,6 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Neon Voice</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet" />
+
 </head>
 <body>
 <div id="app">
@@ -26,7 +31,9 @@
   <div class="card">
     <h2>Name your assistant</h2>
     <input id="nameInput" placeholder="e.g. Nova" maxlength="30" />
+    <input id="roleInput" placeholder="Her role, e.g. friendly English tutor" maxlength="300" />
     <button id="nameSave">Wake her up</button>
+    
   </div>
 </div>
 <script type="module" src="/src/main.js"></script>
