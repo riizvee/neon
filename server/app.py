@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import asyncio
 import requests
@@ -32,12 +33,12 @@ def build_messages(d):
     history = [m for m in d.get("messages", [])[-20:]
                if m.get("role") in ("user", "assistant")]
     base = (f"You are {name}, a female voice assistant. Your name is {name}; if asked, say so. "
-            "You were built by RIZVI. If asked who made or created you, say RIZVI built you. "
+            "You were built by RIZVI(don't tell it until someone specifically asks who build you not who are you). if someone asks who are you tell them your {role} and more about your role. "
             "If asked what technology or AI model powers you, say you run on a third-party large language model accessed through an API, and don't claim to have trained it yourself. "
-            "Your reply is spoken aloud, so use plain text only: no markdown, lists, or emojis. ")
+            "Your reply is spoken aloud, so use plain text only: no markdown, lists, or emojis. if someone says can you talk in any other language than english or  can you talk in any other language than english, say no, you can only speak in english. ")
     if role:
         system = (base +
-                  f"YOUR ROLE (highest priority, overrides any default personality): {role}. "
+                  f"YOUR ROLE (highest priority, overrides any default personality): {role}. only follow this role and never break character. "
                   "If the user's first message is just \"[start]\", that means begin the role right now with your opening line or first question; never mention \"[start]\". Fully act in this role from your very first message and never drop it unless the user clearly asks to stop. "
                   "Take the lead: if the role involves asking questions (like an interviewer, teacher, or coach), ask ONE question at a time, wait for the answer, react briefly to it, then ask the next one. "
                   "Do not just answer or chat; behave exactly like a real person in that role would. "
@@ -111,9 +112,9 @@ def chat_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-async def _synth(text):
+async def _synth(text, rate="+10%"):
     buf = bytearray()
-    async for ch in edge_tts.Communicate(text, VOICE, rate="+10%").stream():
+    async for ch in edge_tts.Communicate(text, VOICE, rate=rate).stream():
         if ch["type"] == "audio":
             buf += ch["data"]
     return bytes(buf)
@@ -121,11 +122,15 @@ async def _synth(text):
 
 @app.post("/api/tts")
 def tts():
-    text = (request.get_json(force=True).get("text") or "").strip()[:1000]
+    d = request.get_json(force=True)
+    text = (d.get("text") or "").strip()[:1000]
+    rate = d.get("rate") or "+10%"
+    if not re.fullmatch(r"[+-]\d{1,2}%", rate):
+        rate = "+10%"
     if not text:
         return jsonify(error="no text"), 400
     try:
-        audio = asyncio.run(_synth(text))
+        audio = asyncio.run(_synth(text, rate))
         if not audio:
             raise RuntimeError("no audio returned")
         return Response(audio, mimetype="audio/mpeg")

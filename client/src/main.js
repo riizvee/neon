@@ -42,7 +42,7 @@ $("nameSave").onclick = () => {
   const v = $("nameInput").value.trim(); if (!v) return;
   name = v; store.set("assistant_name", name);
   role = roleEl.value.trim(); store.set("assistant_role", role); history = []; store.set("history", history);
-  $("log").innerHTML = ""; applyName(); greet();
+  $("log").innerHTML = ""; applyName(); greet(); loadFillers();
 };
 $("nameInput").onkeydown = (e) => { if (e.key === "Enter") roleEl.focus(); };
 const grow = (el, max = 220) => { el.style.height = "auto"; const h = el.scrollHeight + 2; el.style.height = Math.min(h, max) + "px"; el.style.overflowY = h > max ? "auto" : "hidden"; };
@@ -56,6 +56,39 @@ let queue = [];              // { text, urlP }
 let playerRunning = false, streaming = false;
 let audioEl = null, endAudio = null, drainWaiters = [];
 
+// "Hmm..." fillers: pre-generated once so they play instantly if the reply is slow
+// [text, speed]: a slow speed (like -40%) makes the "hmmm" long and thoughtful
+const FILLER_TEXTS = [["Hmmmmmmmm...", "-45%"], ["Hmmmmm... let me think...", "-25%"], ["Hmmmmmm...", "-40%"]];
+const FILLER_DELAY = 900;                 // ms to wait for the first words before saying "hmm"
+let fillers = [], fillersLoading = false;
+async function loadFillers() {
+  if (fillers.length || fillersLoading || muted || !name) return;
+  fillersLoading = true;
+  for (const [t, rate] of FILLER_TEXTS) { try { fillers.push(await fetchAudio(t, rate)); } catch { break; } }
+  fillersLoading = false;
+}
+function enqueueFiller() {
+  if (muted || !fillers.length) return;
+  const url = fillers[Math.floor(Math.random() * fillers.length)];
+  queue.push({ text: "", urlP: Promise.resolve(url), keep: true });
+  if (!playerRunning) runPlayer();
+}
+
+// Speed readout shown under the status text (set SHOW_PERF = false to hide it)
+const SHOW_PERF = true;
+let perf = { t0: 0, ttft: null, voice: null };
+const perfEl = document.createElement("div");
+perfEl.style.cssText = "margin-top:4px;font-size:11px;letter-spacing:2px;color:#00f0ff99";
+$("status").after(perfEl);
+function showPerf() {
+  if (!SHOW_PERF || !perf.t0) return;
+  const f = (v) => (v == null ? "…" : v.toFixed(1) + "s");
+  perfEl.textContent = `words ${f(perf.ttft)} · voice ${f(perf.voice)}`;
+}
+function markVoice() {
+  if (perf.t0 && perf.voice == null) { perf.voice = (performance.now() - perf.t0) / 1000; showPerf(); }
+}
+
 const notifyDrain = () => { const w = drainWaiters; drainWaiters = []; w.forEach((f) => f()); };
 const drained = () => (!playerRunning && !queue.length) ? Promise.resolve() : new Promise((r) => drainWaiters.push(r));
 
@@ -68,10 +101,10 @@ function stopSpeech() {
   notifyDrain();
 }
 
-async function fetchAudio(text) {
+async function fetchAudio(text, rate) {
   const r = await fetch(`${API}/api/tts`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, rate }),
   });
   if (!r.ok) throw new Error("tts " + r.status);
   return URL.createObjectURL(await r.blob());
@@ -131,12 +164,14 @@ async function runPlayer() {
     setState("speaking");
     try {
       const url = await item.urlP;
-      if (my !== gen) { URL.revokeObjectURL(url); break; }
-      try { await playUrl(url); } finally { URL.revokeObjectURL(url); audioEl = null; endAudio = null; }
+      const drop = () => { if (!item.keep) URL.revokeObjectURL(url); };
+      if (my !== gen) { drop(); break; }
+      if (!item.keep) markVoice();
+      try { await playUrl(url); } finally { drop(); audioEl = null; endAudio = null; }
     } catch (e) {
       if (my !== gen) break;
       console.warn("Edge TTS failed, using device voice:", e);
-      try { await speakDevice(item.text); } catch (e2) { console.warn("TTS", e2); }
+      if (item.text) { try { await speakDevice(item.text); } catch (e2) { console.warn("TTS", e2); } }
     }
   }
   playerRunning = false;
@@ -187,6 +222,8 @@ async function send(text, hidden = false) {
   const my = gen, enq = (t) => { if (my === gen) enqueue(t); };
   let reply = "", buf = "", bubble = null, failed = false;
   streaming = true;
+  perf = { t0: performance.now(), ttft: null, voice: null }; showPerf();
+  const fillerTimer = hidden ? null : setTimeout(() => { if (my === gen && !reply) enqueueFiller(); }, FILLER_DELAY);
   const show = () => {
     if (!bubble) bubble = addMsg("assistant", "");
     bubble.textContent = reply; $("log").scrollTop = $("log").scrollHeight;
@@ -200,6 +237,7 @@ async function send(text, hidden = false) {
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
       const chunk = dec.decode(value, { stream: true });
+      if (perf.ttft == null) { perf.ttft = (performance.now() - perf.t0) / 1000; clearTimeout(fillerTimer); showPerf(); }
       reply += chunk; buf += chunk; show();
       const [sents, rest] = takeSentences(buf); buf = rest; sents.forEach(enq);
     }
@@ -214,6 +252,7 @@ async function send(text, hidden = false) {
       if (reply) { buf = reply; show(); }
     }
   }
+  clearTimeout(fillerTimer);
   if (!reply.trim()) {
     failed = true;
     reply = "I can't reach my server right now. Please check the connection.";
@@ -225,6 +264,7 @@ async function send(text, hidden = false) {
   else history.pop();                              // don't keep a failed turn in memory
   busy = false;
   await drained();
+  console.log(`[speed] first words ${perf.ttft?.toFixed(2)}s, voice started ${perf.voice?.toFixed(2)}s`);
   if (!listening && !busy && !streaming) setState("idle");
 }
 const chatEl = $("input");
@@ -269,5 +309,5 @@ function stopMic() {
 $("mic").onclick = toggleMic;
 
 // ---------- Boot ----------
-applyName();
+applyName(); loadFillers();
 history.slice(-12).forEach((m) => { if (m.content !== KICKOFF) addMsg(m.role, m.content); });
