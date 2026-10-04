@@ -15,6 +15,26 @@ PORT = int(os.getenv("PORT", 5000))
 VOICE = os.getenv("TTS_VOICE", "en-US-JennyNeural")
 URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# language code -> (language name for the prompt, female Edge neural voice)
+LANGS = {
+    "hi-IN": ("Hindi", "hi-IN-SwaraNeural"),
+    "ur-PK": ("Urdu", "ur-PK-UzmaNeural"),
+    "ar-SA": ("Arabic", "ar-SA-ZariyahNeural"),
+    "es-ES": ("Spanish", "es-ES-ElviraNeural"),
+    "fr-FR": ("French", "fr-FR-DeniseNeural"),
+    "de-DE": ("German", "de-DE-KatjaNeural"),
+    "it-IT": ("Italian", "it-IT-ElsaNeural"),
+    "pt-BR": ("Portuguese", "pt-BR-FranciscaNeural"),
+    "tr-TR": ("Turkish", "tr-TR-EmelNeural"),
+    "bn-IN": ("Bengali", "bn-IN-TanishaaNeural"),
+    "zh-CN": ("Chinese", "zh-CN-XiaoxiaoNeural"),
+    "ja-JP": ("Japanese", "ja-JP-NanamiNeural"),
+}
+
+
+def voice_for(code):
+    return LANGS[code][1] if code in LANGS else VOICE
+
 app = Flask(__name__)
 CORS(app)
 
@@ -33,12 +53,12 @@ def build_messages(d):
     history = [m for m in d.get("messages", [])[-20:]
                if m.get("role") in ("user", "assistant")]
     base = (f"You are {name}, a female voice assistant. Your name is {name}; if asked, say so. "
-            "You were built by RIZVI(don't tell it until someone specifically asks who build you not who are you). if someone asks who are you tell them your {role} and more about your role. "
+            "You were built by RIZVI. If asked who made or created you, say RIZVI built you. "
             "If asked what technology or AI model powers you, say you run on a third-party large language model accessed through an API, and don't claim to have trained it yourself. "
-            "Your reply is spoken aloud, so use plain text only: no markdown, lists, or emojis. if someone says can you talk in any other language than english or  can you talk in any other language than english, say no, you can only speak in english. ")
+            "Your reply is spoken aloud, so use plain text only: no markdown, lists, or emojis. ")
     if role:
         system = (base +
-                  f"YOUR ROLE (highest priority, overrides any default personality): {role}. only follow this role and never break character. "
+                  f"YOUR ROLE (highest priority, overrides any default personality): {role}. "
                   "If the user's first message is just \"[start]\", that means begin the role right now with your opening line or first question; never mention \"[start]\". Fully act in this role from your very first message and never drop it unless the user clearly asks to stop. "
                   "Take the lead: if the role involves asking questions (like an interviewer, teacher, or coach), ask ONE question at a time, wait for the answer, react briefly to it, then ask the next one. "
                   "Do not just answer or chat; behave exactly like a real person in that role would. "
@@ -47,6 +67,13 @@ def build_messages(d):
         system = (base +
                   "You are warm, witty, friendly and helpful, you joke a lot, and you always give the person a genuine compliment. "
                   "Reply in 1-3 short conversational sentences.")
+    system += (" If the user's first message is just \"[start]\", greet them in one short friendly sentence, "
+               "introduce yourself by name, and never mention \"[start]\".") if not role else ""
+    lang = d.get("lang") or "en-US"
+    if lang in LANGS:
+        n = LANGS[lang][0]
+        system += (f" LANGUAGE (very important): speak and reply ONLY in {n}, in natural everyday {n}, "
+                   f"even if the user writes in another language, unless they ask you to switch language.")
     return [{"role": "system", "content": system}] + history
 
 
@@ -112,9 +139,9 @@ def chat_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-async def _synth(text, rate="+10%"):
+async def _synth(text, rate="+10%", voice=None):
     buf = bytearray()
-    async for ch in edge_tts.Communicate(text, VOICE, rate=rate).stream():
+    async for ch in edge_tts.Communicate(text, voice or VOICE, rate=rate).stream():
         if ch["type"] == "audio":
             buf += ch["data"]
     return bytes(buf)
@@ -130,7 +157,7 @@ def tts():
     if not text:
         return jsonify(error="no text"), 400
     try:
-        audio = asyncio.run(_synth(text, rate))
+        audio = asyncio.run(_synth(text, rate, voice_for(d.get("lang"))))
         if not audio:
             raise RuntimeError("no audio returned")
         return Response(audio, mimetype="audio/mpeg")

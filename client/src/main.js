@@ -14,6 +14,16 @@ const store = {
 let name = store.get("assistant_name", "");
 let role = store.get("assistant_role", "");
 let history = store.get("history", []);
+let lang = store.get("assistant_lang", "en-US");
+const LANGS = [
+  ["en-US", "English"], ["hi-IN", "हिन्दी (Hindi)"], ["ur-PK", "اردو (Urdu)"], ["ar-SA", "العربية (Arabic)"],
+  ["es-ES", "Español"], ["fr-FR", "Français"], ["de-DE", "Deutsch"], ["it-IT", "Italiano"],
+  ["pt-BR", "Português (Brasil)"], ["tr-TR", "Türkçe"], ["bn-IN", "বাংলা (Bengali)"],
+  ["zh-CN", "中文 (Chinese)"], ["ja-JP", "日本語 (Japanese)"],
+];
+const langEl = document.getElementById("langSelect") || document.createElement("select");
+LANGS.forEach(([c, n]) => { const o = document.createElement("option"); o.value = c; o.textContent = n; langEl.appendChild(o); });
+langEl.value = lang;
 let muted = store.get("muted", false);
 let busy = false, listening = false;
 const roleEl = document.getElementById("roleInput") || document.createElement("textarea");
@@ -22,7 +32,7 @@ const setState = (s) => { $("orb").className = s === "idle" ? "" : s; $("status"
 const addMsg = (role, text) => {
   const d = document.createElement("div");
   d.className = "msg " + (role === "user" ? "user" : "bot");
-  d.textContent = text; $("log").appendChild(d);
+  d.dir = "auto"; d.textContent = text; $("log").appendChild(d);
   $("log").scrollTop = $("log").scrollHeight;
   return d;
 };
@@ -34,21 +44,22 @@ function applyName() {
 }
 const KICKOFF = "[start]";
 function greet() {
-  if (role) { send(KICKOFF, true); return; }
+  if (role || !lang.startsWith("en")) { send(KICKOFF, true); return; }
   const g = `Hi, I'm ${name}. How can I help you?`;
   addMsg("assistant", g); speak(g);
 }
 $("nameSave").onclick = () => {
   const v = $("nameInput").value.trim(); if (!v) return;
   name = v; store.set("assistant_name", name);
-  role = roleEl.value.trim(); store.set("assistant_role", role); history = []; store.set("history", history);
+  role = roleEl.value.trim(); store.set("assistant_role", role);
+  lang = langEl.value; store.set("assistant_lang", lang); nativeVoiceIdx = undefined; if ("speechSynthesis" in window) pickWebVoice(); history = []; store.set("history", history);
   $("log").innerHTML = ""; applyName(); greet(); loadFillers();
 };
 $("nameInput").onkeydown = (e) => { if (e.key === "Enter") roleEl.focus(); };
 const grow = (el, max = 220) => { el.style.height = "auto"; const h = el.scrollHeight + 2; el.style.height = Math.min(h, max) + "px"; el.style.overflowY = h > max ? "auto" : "hidden"; };
 roleEl.oninput = () => grow(roleEl);
 roleEl.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("nameSave").click(); };
-$("renameBtn").onclick = () => { $("nameInput").value = name; roleEl.value = role; $("overlay").classList.remove("hide"); grow(roleEl); };
+$("renameBtn").onclick = () => { $("nameInput").value = name; roleEl.value = role; langEl.value = lang; $("overlay").classList.remove("hide"); grow(roleEl); };
 
 // ---------- Voice out: speaks sentence by sentence while the reply is still streaming ----------
 let gen = 0;                 // bumps on every stopSpeech so stale work is ignored
@@ -61,10 +72,14 @@ let audioEl = null, endAudio = null, drainWaiters = [];
 const FILLER_TEXTS = [["Hmmmmmmmm...", "-45%"], ["Hmmmmm... let me think...", "-25%"], ["Hmmmmmm...", "-40%"]];
 const FILLER_DELAY = 900;                 // ms to wait for the first words before saying "hmm"
 let fillers = [], fillersLoading = false;
+let fillersLang = null;
 async function loadFillers() {
-  if (fillers.length || fillersLoading || muted || !name) return;
-  fillersLoading = true;
-  for (const [t, rate] of FILLER_TEXTS) { try { fillers.push(await fetchAudio(t, rate)); } catch { break; } }
+  if (fillersLoading || muted || !name) return;
+  if (fillersLang !== lang) { fillers.forEach((u) => URL.revokeObjectURL(u)); fillers = []; }
+  if (fillers.length) return;
+  fillersLoading = true; fillersLang = lang;
+  const set = lang.startsWith("en") ? FILLER_TEXTS : FILLER_TEXTS.filter((_, i) => i !== 1);   // "let me think" is English only
+  for (const [t, rate] of set) { try { fillers.push(await fetchAudio(t, rate)); } catch { break; } }
   fillersLoading = false;
 }
 function enqueueFiller() {
@@ -104,7 +119,7 @@ function stopSpeech() {
 async function fetchAudio(text, rate) {
   const r = await fetch(`${API}/api/tts`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, rate }),
+    body: JSON.stringify({ text, rate, lang }),
   });
   if (!r.ok) throw new Error("tts " + r.status);
   return URL.createObjectURL(await r.blob());
@@ -123,7 +138,7 @@ function playUrl(url) {
 const FEMALE = /(female|samantha|zira|aria|jenny|hazel|susan|karen|moira|tessa|victoria|serena)/i;
 let webVoice = null;
 function pickWebVoice() {
-  const v = speechSynthesis.getVoices().filter((x) => x.lang.startsWith("en"));
+  const v = speechSynthesis.getVoices().filter((x) => x.lang.startsWith(lang.slice(0, 2)));
   webVoice = v.find((x) => FEMALE.test(x.name)) || v[0] || null;
 }
 if ("speechSynthesis" in window) { pickWebVoice(); speechSynthesis.onvoiceschanged = pickWebVoice; }
@@ -132,18 +147,18 @@ async function speakDevice(text) {
   if (native) {
     if (nativeVoiceIdx === undefined) {
       const { voices } = await TextToSpeech.getSupportedVoices();
-      const en = voices.map((v, idx) => ({ ...v, idx })).filter((v) => v.lang.startsWith("en"));
+      const en = voices.map((v, idx) => ({ ...v, idx })).filter((v) => v.lang.startsWith(lang.slice(0, 2)));
       const best = en.find((v) => /female/i.test(v.name));
       nativeVoiceIdx = best ? best.idx : null;
     }
-    const opts = { text, lang: "en-US", rate: 1.0, pitch: 1.0, volume: 1.0, category: "playback" };
+    const opts = { text, lang, rate: 1.0, pitch: 1.0, volume: 1.0, category: "playback" };
     if (nativeVoiceIdx !== null) opts.voice = nativeVoiceIdx;
     await TextToSpeech.speak(opts);
   } else {
     await new Promise((res) => {
       const u = new SpeechSynthesisUtterance(text);
       if (webVoice) u.voice = webVoice;
-      u.lang = "en-US"; u.pitch = 1.1; u.rate = 1.05;
+      u.lang = lang; u.pitch = 1.1; u.rate = 1.05;
       u.onend = u.onerror = res; speechSynthesis.speak(u);
     });
   }
@@ -228,7 +243,7 @@ async function send(text, hidden = false) {
     if (!bubble) bubble = addMsg("assistant", "");
     bubble.textContent = reply; $("log").scrollTop = $("log").scrollHeight;
   };
-  const payload = JSON.stringify({ name, role, messages: history });
+  const payload = JSON.stringify({ name, role, lang, messages: history });
   const opts = { method: "POST", headers: { "Content-Type": "application/json" }, body: payload };
   try {
     const r = await fetch(`${API}/api/chat/stream`, opts);
@@ -267,7 +282,7 @@ async function send(text, hidden = false) {
   console.log(`[speed] first words ${perf.ttft?.toFixed(2)}s, voice started ${perf.voice?.toFixed(2)}s`);
   if (!listening && !busy && !streaming) setState("idle");
 }
-const chatEl = $("input");
+const chatEl = $("input"); chatEl.dir = "auto";
 const isTouch = window.matchMedia("(pointer: coarse)").matches;
 function sendFromBox() {
   const v = chatEl.value; if (!v.trim()) return;
@@ -291,11 +306,11 @@ async function toggleMic() {
     if (native) {
       const p = await SpeechRecognition.requestPermissions();
       if (p.speechRecognition !== "granted") throw new Error("denied");
-      const res = await SpeechRecognition.start({ language: "en-US", partialResults: false, popup: false });
+      const res = await SpeechRecognition.start({ language: lang, partialResults: false, popup: false });
       stopMic(); if (res?.matches?.[0]) send(res.matches[0]);
     } else {
       if (!WebSR) { addMsg("assistant", "Voice input isn't supported in this browser. Try Chrome."); return stopMic(); }
-      const r = new WebSR(); r.lang = "en-US"; r.interimResults = false;
+      const r = new WebSR(); r.lang = lang; r.interimResults = false;
       r.onresult = (e) => send(e.results[0][0].transcript);
       r.onend = r.onerror = stopMic; r.start();
     }
