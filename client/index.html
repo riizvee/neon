@@ -4,11 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Neon Voice</title>
-
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet" />
-
 </head>
 <body>
 <div id="app">
@@ -16,13 +14,13 @@
     <h1 id="title">NEON VOICE</h1>
     <div class="tools">
       <button id="muteBtn" title="Mute voice">🔊</button>
-      <button id="renameBtn" title="Rename">✎</button>
+      <button id="renameBtn" title="Rename / change role">✎</button>
     </div>
   </header>
   <div id="orbWrap"><div id="orb"></div><div id="status">idle</div></div>
   <main id="log"></main>
   <footer>
-    <input id="input" placeholder="Type a message..." autocomplete="off" />
+    <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
     <button id="send">➤</button>
     <button id="mic">🎤</button>
   </footer>
@@ -31,9 +29,8 @@
   <div class="card">
     <h2>Name your assistant</h2>
     <input id="nameInput" placeholder="e.g. Nova" maxlength="30" />
-    <input id="roleInput" placeholder="Her role, e.g. friendly English tutor" maxlength="300" />
+    <textarea id="roleInput" rows="2" maxlength="1000" placeholder="Her role (optional), e.g. a friendly job interviewer for a developer position. Ask one question at a time."></textarea>
     <button id="nameSave">Wake her up</button>
-    
   </div>
 </div>
 <script type="module" src="/src/main.js"></script>

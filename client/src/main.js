@@ -16,6 +16,7 @@ let role = store.get("assistant_role", "");
 let history = store.get("history", []);
 let muted = store.get("muted", false);
 let busy = false, listening = false;
+const roleEl = document.getElementById("roleInput") || document.createElement("textarea");
 
 const setState = (s) => { $("orb").className = s === "idle" ? "" : s; $("status").textContent = s; };
 const addMsg = (role, text) => {
@@ -39,12 +40,14 @@ function greet() {
 $("nameSave").onclick = () => {
   const v = $("nameInput").value.trim(); if (!v) return;
   name = v; store.set("assistant_name", name);
-  role = $("roleInput").value.trim(); store.set("assistant_role", role); history = []; store.set("history", history);
+  role = roleEl.value.trim(); store.set("assistant_role", role); history = []; store.set("history", history);
   $("log").innerHTML = ""; applyName(); greet();
 };
-$("nameInput").onkeydown = (e) => { if (e.key === "Enter") $("roleInput").focus(); };
-$("roleInput").onkeydown = (e) => { if (e.key === "Enter") $("nameSave").click(); };
-$("renameBtn").onclick = () => { $("nameInput").value = name; $("roleInput").value = role; $("overlay").classList.remove("hide"); };
+$("nameInput").onkeydown = (e) => { if (e.key === "Enter") roleEl.focus(); };
+const grow = (el, max = 220) => { el.style.height = "auto"; const h = el.scrollHeight + 2; el.style.height = Math.min(h, max) + "px"; el.style.overflowY = h > max ? "auto" : "hidden"; };
+roleEl.oninput = () => grow(roleEl);
+roleEl.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("nameSave").click(); };
+$("renameBtn").onclick = () => { $("nameInput").value = name; roleEl.value = role; $("overlay").classList.remove("hide"); grow(roleEl); };
 
 // ---------- Voice out: Edge neural voice from server, device voice as fallback ----------
 let audioEl = null, endAudio = null;
@@ -142,8 +145,19 @@ async function send(text, hidden = false) {
   addMsg("assistant", reply); busy = false;
   await speak(reply);
 }
-$("send").onclick = () => { send($("input").value); $("input").value = ""; };
-$("input").onkeydown = (e) => { if (e.key === "Enter") $("send").click(); };
+const chatEl = $("input");
+const isTouch = window.matchMedia("(pointer: coarse)").matches;
+function sendFromBox() {
+  const v = chatEl.value; if (!v.trim()) return;
+  chatEl.value = ""; grow(chatEl, 140);
+  send(v);
+}
+$("send").onclick = sendFromBox;
+chatEl.oninput = () => grow(chatEl, 140);
+chatEl.onkeydown = (e) => {
+  // Desktop: Enter sends, Shift+Enter = new line. Phone: Enter = new line, use the send button.
+  if (e.key === "Enter" && !e.shiftKey && !isTouch) { e.preventDefault(); sendFromBox(); }
+};
 
 // ---------- Voice in ----------
 const WebSR = window.SpeechRecognition || window.webkitSpeechRecognition;

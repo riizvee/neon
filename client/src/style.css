@@ -41,3 +41,17 @@ h1{font-size:20px;font-weight:700;letter-spacing:.35em}
 input{font-family:inherit;font-size:17px;letter-spacing:.03em}
 input::placeholder{color:#00f0ff88}
 button{font-family:inherit}
+textarea{background:#0b0720;border:1px solid var(--c);color:#fff;border-radius:12px;padding:12px;font-family:inherit;font-size:17px;line-height:1.4;outline:none;resize:vertical;min-height:60px;max-height:220px;box-shadow:0 0 10px #00f0ff44;text-align:left}
+textarea:focus{box-shadow:0 0 22px var(--c)}
+textarea::placeholder{color:#00f0ff88}
+.card{max-height:90vh;overflow-y:auto}
+
+footer{align-items:flex-end}
+#input{min-height:48px;max-height:140px;resize:none;overflow-y:auto;line-height:1.4;padding:12px}
+
+html,body{overflow-x:hidden}
+textarea{scrollbar-width:none}
+textarea::-webkit-scrollbar{display:none}
+#log{scrollbar-width:thin;scrollbar-color:#00f0ff #07040f}
+
+footer textarea{flex:1;width:100%;min-width:0}
