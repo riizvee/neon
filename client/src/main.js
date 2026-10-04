@@ -69,7 +69,7 @@ let audioEl = null, endAudio = null, drainWaiters = [];
 
 // "Hmm..." fillers: pre-generated once so they play instantly if the reply is slow
 // [text, speed]: a slow speed (like -40%) makes the "hmmm" long and thoughtful
-const FILLER_TEXTS = [["Hmmmmmmmm...", "-45%"], ["Hmmmmm... let me think...", "-25%"], ["Hmmmmmm...", "-40%"]];
+const FILLER_TEXTS = [["Okayyy...", "-30%"], ["Okay...", "-25%"], ["Okaaay...", "-35%"]];
 const FILLER_DELAY = 900;                 // ms to wait for the first words before saying "hmm"
 let fillers = [], fillersLoading = false;
 let fillersLang = null;
@@ -78,7 +78,7 @@ async function loadFillers() {
   if (fillersLang !== lang) { fillers.forEach((u) => URL.revokeObjectURL(u)); fillers = []; }
   if (fillers.length) return;
   fillersLoading = true; fillersLang = lang;
-  const set = lang.startsWith("en") ? FILLER_TEXTS : FILLER_TEXTS.filter((_, i) => i !== 1);   // "let me think" is English only
+const set = FILLER_TEXTS;
   for (const [t, rate] of set) { try { fillers.push(await fetchAudio(t, rate)); } catch { break; } }
   fillersLoading = false;
 }
