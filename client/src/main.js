@@ -69,7 +69,7 @@ let audioEl = null, endAudio = null, drainWaiters = [];
 
 // "Hmm..." fillers: pre-generated once so they play instantly if the reply is slow
 // [text, speed]: a slow speed (like -40%) makes the "hmmm" long and thoughtful
-const FILLER_TEXTS = [["OOOH...", "-30%"], ["OOOHH...", "-25%"], ["OOOOOH...", "-35%"]];
+const FILLER_TEXTS = [["OOOH..., ", "-30%"], ["OOOHH..., ", "-25%"], ["OOOOOH..., ", "-35%"]];
 const FILLER_DELAY = 900;                 // ms to wait for the first words before saying "hmm"
 let fillers = [], fillersLoading = false;
 let fillersLang = null;
