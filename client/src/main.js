@@ -24,6 +24,7 @@ const addMsg = (role, text) => {
   d.className = "msg " + (role === "user" ? "user" : "bot");
   d.textContent = text; $("log").appendChild(d);
   $("log").scrollTop = $("log").scrollHeight;
+  return d;
 };
 
 // ---------- Name ----------
@@ -49,32 +50,40 @@ roleEl.oninput = () => grow(roleEl);
 roleEl.onkeydown = (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("nameSave").click(); };
 $("renameBtn").onclick = () => { $("nameInput").value = name; roleEl.value = role; $("overlay").classList.remove("hide"); grow(roleEl); };
 
-// ---------- Voice out: Edge neural voice from server, device voice as fallback ----------
-let audioEl = null, endAudio = null;
+// ---------- Voice out: speaks sentence by sentence while the reply is still streaming ----------
+let gen = 0;                 // bumps on every stopSpeech so stale work is ignored
+let queue = [];              // { text, urlP }
+let playerRunning = false, streaming = false;
+let audioEl = null, endAudio = null, drainWaiters = [];
+
+const notifyDrain = () => { const w = drainWaiters; drainWaiters = []; w.forEach((f) => f()); };
+const drained = () => (!playerRunning && !queue.length) ? Promise.resolve() : new Promise((r) => drainWaiters.push(r));
 
 function stopSpeech() {
+  gen++; queue = [];
   if (audioEl) { audioEl.pause(); audioEl = null; }
   if (endAudio) { endAudio(); endAudio = null; }
   if ("speechSynthesis" in window) speechSynthesis.cancel();
   if (native) TextToSpeech.stop().catch(() => {});
+  notifyDrain();
 }
 
-async function speakEdge(text) {
+async function fetchAudio(text) {
   const r = await fetch(`${API}/api/tts`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
   });
   if (!r.ok) throw new Error("tts " + r.status);
-  const url = URL.createObjectURL(await r.blob());
-  try {
-    await new Promise((res, rej) => {
-      const a = new Audio(url);
-      audioEl = a; endAudio = res;
-      a.onended = res; a.onpause = res;
-      a.onerror = () => rej(new Error("audio error"));
-      a.play().catch(rej);
-    });
-  } finally { URL.revokeObjectURL(url); audioEl = null; endAudio = null; }
+  return URL.createObjectURL(await r.blob());
+}
+function playUrl(url) {
+  return new Promise((res, rej) => {
+    const a = new Audio(url);
+    audioEl = a; endAudio = res;
+    a.onended = res; a.onpause = res;
+    a.onerror = () => rej(new Error("audio error"));
+    a.play().catch(rej);
+  });
 }
 
 // Fallback: device voice
@@ -85,7 +94,6 @@ function pickWebVoice() {
   webVoice = v.find((x) => FEMALE.test(x.name)) || v[0] || null;
 }
 if ("speechSynthesis" in window) { pickWebVoice(); speechSynthesis.onvoiceschanged = pickWebVoice; }
-
 let nativeVoiceIdx;
 async function speakDevice(text) {
   if (native) {
@@ -108,42 +116,116 @@ async function speakDevice(text) {
   }
 }
 
+// Queue: audio for the next sentence is fetched while the current one is playing
+function enqueue(text) {
+  text = text.trim(); if (!text || muted) return;
+  const item = { text, urlP: fetchAudio(text) };
+  item.urlP.catch(() => {});
+  queue.push(item);
+  if (!playerRunning) runPlayer();
+}
+async function runPlayer() {
+  playerRunning = true; const my = gen;
+  while (queue.length && my === gen) {
+    const item = queue.shift();
+    setState("speaking");
+    try {
+      const url = await item.urlP;
+      if (my !== gen) { URL.revokeObjectURL(url); break; }
+      try { await playUrl(url); } finally { URL.revokeObjectURL(url); audioEl = null; endAudio = null; }
+    } catch (e) {
+      if (my !== gen) break;
+      console.warn("Edge TTS failed, using device voice:", e);
+      try { await speakDevice(item.text); } catch (e2) { console.warn("TTS", e2); }
+    }
+  }
+  playerRunning = false;
+  if (queue.length) return runPlayer();          // new items arrived after a stop
+  if (!streaming && !listening && !busy) setState("idle");
+  notifyDrain();
+}
+
+// Cut text into sentences as soon as they are complete
+function takeSentences(buf, final = false) {
+  const out = [];
+  const re = /[.!?…]+["')\]]*\s+|\n+/g;
+  let start = 0, m;
+  while ((m = re.exec(buf))) {
+    const end = m.index + m[0].length;
+    if (end - start >= 12) { out.push(buf.slice(start, end).trim()); start = end; }
+  }
+  let rest = buf.slice(start);
+  if (!final && rest.length > 160) {            // very long sentence: cut at a comma or space
+    const i = Math.max(rest.lastIndexOf(", "), rest.lastIndexOf(" "));
+    if (i > 40) { out.push(rest.slice(0, i + 1).trim()); rest = rest.slice(i + 1); }
+  }
+  if (final && rest.trim()) { out.push(rest.trim()); rest = ""; }
+  return [out.filter(Boolean), rest];
+}
+
 async function speak(text) {
   if (muted) return;
   stopSpeech();
   setState("speaking");
-  try { await speakEdge(text); }
-  catch (e) {
-    console.warn("Edge TTS failed, using device voice:", e);
-    try { await speakDevice(text); } catch (e2) { console.warn("TTS", e2); }
-  }
-  setState("idle");
+  const [parts] = takeSentences(text, true);
+  parts.forEach(enqueue);
+  await drained();
+  if (!streaming && !listening && !busy) setState("idle");
 }
 $("muteBtn").onclick = () => {
   muted = !muted; store.set("muted", muted); $("muteBtn").textContent = muted ? "🔇" : "🔊";
-  if (muted) { stopSpeech(); setState("idle"); }
+  if (muted) { stopSpeech(); if (!streaming) setState("idle"); }
 };
 $("muteBtn").textContent = muted ? "🔇" : "🔊";
 
-// ---------- Chat ----------
+// ---------- Chat (streamed: text and voice start as soon as the first words arrive) ----------
 async function send(text, hidden = false) {
   text = text.trim(); if (!text || busy) return;
   busy = true; if (!hidden) addMsg("user", text);
   history.push({ role: "user", content: text });
-  setState("thinking");
-  let reply;
+  setState("thinking"); stopSpeech();
+  const my = gen, enq = (t) => { if (my === gen) enqueue(t); };
+  let reply = "", buf = "", bubble = null, failed = false;
+  streaming = true;
+  const show = () => {
+    if (!bubble) bubble = addMsg("assistant", "");
+    bubble.textContent = reply; $("log").scrollTop = $("log").scrollHeight;
+  };
+  const payload = JSON.stringify({ name, role, messages: history });
+  const opts = { method: "POST", headers: { "Content-Type": "application/json" }, body: payload };
   try {
-    const r = await fetch(`${API}/api/chat`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, role, messages: history }),
-    });
-    const j = await r.json();
-    reply = j.reply || "Sorry, something went wrong on my end.";
-  } catch { reply = "I can't reach my server right now. Please check the connection."; }
-  history.push({ role: "assistant", content: reply });
-  store.set("history", history.slice(-40));
-  addMsg("assistant", reply); busy = false;
-  await speak(reply);
+    const r = await fetch(`${API}/api/chat/stream`, opts);
+    if (!r.ok || !r.body) throw new Error("stream " + r.status);
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      const chunk = dec.decode(value, { stream: true });
+      reply += chunk; buf += chunk; show();
+      const [sents, rest] = takeSentences(buf); buf = rest; sents.forEach(enq);
+    }
+  } catch (e) {
+    console.warn("stream failed:", e);
+    if (!reply) {                                  // fall back to the normal (non-streaming) endpoint
+      try {
+        const r = await fetch(`${API}/api/chat`, opts);
+        const j = await r.json();
+        reply = j.reply || ""; 
+      } catch { /* handled below */ }
+      if (reply) { buf = reply; show(); }
+    }
+  }
+  if (!reply.trim()) {
+    failed = true;
+    reply = "I can't reach my server right now. Please check the connection.";
+    buf = reply; show();
+  }
+  const [lastParts] = takeSentences(buf, true); lastParts.forEach(enq);
+  streaming = false;
+  if (!failed) { history.push({ role: "assistant", content: reply }); store.set("history", history.slice(-40)); }
+  else history.pop();                              // don't keep a failed turn in memory
+  busy = false;
+  await drained();
+  if (!listening && !busy && !streaming) setState("idle");
 }
 const chatEl = $("input");
 const isTouch = window.matchMedia("(pointer: coarse)").matches;

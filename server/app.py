@@ -1,8 +1,9 @@
 import os
+import json
 import asyncio
 import requests
 import edge_tts
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -25,11 +26,9 @@ def health():
     return jsonify(ok=True)
 
 
-@app.post("/api/chat")
-def chat():
-    d = request.get_json(force=True)
+def build_messages(d):
     name = (d.get("name") or "Nova").strip()[:30]
-    role = (d.get("role") or "").strip()[:300]
+    role = (d.get("role") or "").strip()[:1000]
     history = [m for m in d.get("messages", [])[-20:]
                if m.get("role") in ("user", "assistant")]
     base = (f"You are {name}, a female voice assistant. Your name is {name}; if asked, say so. "
@@ -47,14 +46,24 @@ def chat():
         system = (base +
                   "You are warm, witty, friendly and helpful, you joke a lot, and you always give the person a genuine compliment. "
                   "Reply in 1-3 short conversational sentences.")
+    return [{"role": "system", "content": system}] + history
+
+
+def groq_payload(messages, stream=False):
+    p = {"model": MODEL, "messages": messages, "temperature": 0.8,
+         "max_completion_tokens": 1024, "reasoning_effort": "low"}
+    if stream:
+        p["stream"] = True
+    return p
+
+
+@app.post("/api/chat")
+def chat():
+    d = request.get_json(force=True)
     try:
         r = requests.post(URL, timeout=60,
                           headers={"Authorization": f"Bearer {KEY}"},
-                          json={"model": MODEL,
-                                "messages": [{"role": "system", "content": system}] + history,
-                                "temperature": 0.8,
-                                "max_completion_tokens": 1024,
-                                "reasoning_effort": "low"})
+                          json=groq_payload(build_messages(d)))
         if not r.ok:
             print("GROQ ERROR:", r.status_code, r.text[:400])
             return jsonify(error=r.text), 500
@@ -63,6 +72,43 @@ def chat():
     except Exception as e:
         print("CHAT ERROR:", repr(e))
         return jsonify(error=str(e)), 500
+
+
+@app.post("/api/chat/stream")
+def chat_stream():
+    d = request.get_json(force=True)
+    try:
+        r = requests.post(URL, stream=True, timeout=60,
+                          headers={"Authorization": f"Bearer {KEY}"},
+                          json=groq_payload(build_messages(d), stream=True))
+    except Exception as e:
+        print("STREAM ERROR:", repr(e))
+        return jsonify(error=str(e)), 500
+    if not r.ok:
+        print("GROQ ERROR:", r.status_code, r.text[:400])
+        return jsonify(error=r.text), 500
+    r.encoding = "utf-8"
+
+    def gen():
+        try:
+            for line in r.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(data)["choices"][0]["delta"].get("content")
+                except Exception:
+                    continue
+                if delta:
+                    yield delta
+        finally:
+            r.close()
+
+    return Response(stream_with_context(gen()),
+                    mimetype="text/plain; charset=utf-8",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 async def _synth(text):
